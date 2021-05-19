@@ -1,0 +1,285 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r, include = F}
+options(stringsAsFactors = F)
+library(tidyverse)
+library(rvest)
+library(ggpubr)
+
+```
+
+### Home Court Advantage in 2021: Does it exist?
+
+```{r, warnings = F}
+df = read.csv('inArenaResults.csv')[,-1] %>% as_tibble()
+df = df[-which(is.na(df$AwayPts)),]
+df = df[-which(df$Away=="Playoffs"),]
+
+df = separate(data = df, col = Date, into = c("DayofWeek", "Month", "Day", "Year"), sep = " ")
+df$Day = gsub(",","",df$Day)
+df$Month = ifelse(df$Month == "Jan", 1, ifelse(df$Month == "Feb", 2, ifelse(df$Month == "Mar", 3, ifelse(df$Month == "Apr", 4, ifelse(df$Month == "May", 5, ifelse(df$Month == "Jun", 6, ifelse(df$Month == "Jul", 7, ifelse(df$Month == "Aug", 8, ifelse(df$Month == "Sep", 9, ifelse(df$Month == "Oct", 10, ifelse(df$Month == "Nov", 11, 12)))))))))))
+df = df %>% select(-DayofWeek)
+df$Month = ifelse(as.numeric(df$Month) < 10, paste0("0", df$Month), df$Month)
+df$Day = ifelse(as.numeric(df$Day) < 10, paste0("0", df$Day), df$Day)
+df$Date = as.Date(paste0(df$Year, "-", df$Month, "-", df$Day))
+df = df %>% select(-Month, -Day, -Year)
+df$Attend = as.numeric(gsub(",","",df$Attend))
+df = df %>% drop_na()
+
+df %>% group_by(Date) %>% summarize(.groups = "drop", mean_attend = mean(Attend), season = as.factor(season)) %>% ggplot(aes(x = Date, y = mean_attend, fill = season)) + geom_bar(stat = "identity") + scale_x_date(date_breaks = "1 year") + theme_bw() + scale_y_continuous("Average Attendance") + scale_fill_manual("Season", values = c("#FED976", "#FEB24C", "#FD8D3C", "#F03B20", "#BD0026", "grey20")) + ggtitle("Average Attendance Per Day", "2015-16 to 2020-21")
+
+
+```
+
+```{r, echo = F}
+df = read.csv('inArenaResults.csv')[,-1] %>% as_tibble()
+df = df[-which(is.na(df$AwayPts)),]
+df = df[-which(df$Away=="Playoffs"),]
+df$Attend = ifelse(df$Attend == "", "No", "Yes")
+df[,c("AwayPts", "HomePts")] = sapply(df[,c("AwayPts", "HomePts")], as.numeric)
+df = df %>% mutate(pointDiff = HomePts-AwayPts)
+sta = read.csv('standingsFull.csv')[,-1] %>% as_tibble()
+
+df$AwayWP = 0; df$HomeWP = 0
+for (i in 1:nrow(df)){
+  df$AwayWP[i] = sta$V4[which(sta$V1 == df$Away[i] & sta$Yr == df$season[i])]
+  df$HomeWP[i] = sta$V4[which(sta$V1 == df$Home[i] & sta$Yr == df$season[i])]
+}
+
+df = df %>% mutate(WPDiff = HomeWP - AwayWP)
+#df %>% ggplot(aes(x = WPDiff, y = pointDiff)) + geom_point(color = "steelblue", alpha = I(1/2)) + theme_bw()
+
+df$Winner = ifelse(df$pointDiff > 0, "Home", "Away")
+df %>% ggplot(aes(x = pointDiff, fill = Winner)) + geom_histogram(alpha = I(.90), binwidth = 1) + geom_vline(xintercept = 0, linetype = "dashed") + facet_grid(season ~ ., scales = "free_y") + scale_fill_manual("", values = c("#66C2A5","#5E4FA2")) + theme(legend.position = "top") + scale_x_continuous("Point Differential", breaks = seq(-60, 60, 10)) + scale_y_continuous("Games")
+
+```
+
+  ```{r, results='asis', echo=FALSE}
+cat("\\newpage")
+```
+
+```{r, echo = F}
+avgpd = df %>% group_by(season) %>% summarise(.groups = "drop", mpointDiff = mean(pointDiff))
+#summary(df$WPDiff)
+
+df %>% ggplot(aes(x = WPDiff)) + geom_density(fill = "grey95") + scale_x_continuous("Win Percentage Difference", breaks = seq(-1, 1, 0.2)) + geom_vline(xintercept = c(-0.146, 0, 0.146), alpha = I(1/2)) + theme_bw() + annotate(geom = 'text', x = -0.22, y = 0.5, label = 'Away Favored', angle = 270) + annotate(geom = 'text', x = -0.07, y = 0.70, label = 'Away Slightly Favored', angle = 270)+ annotate(geom = 'text', x = 0.07, y = 0.71, label = 'Home Slightly Favored', angle = 270)+ annotate(geom = 'text', x = 0.22, y = 0.5, label = 'Home Favored', angle = 270)
+df$WPDiffCat = ifelse(df$WPDiff <= -0.146, "Away Favored", ifelse(df$WPDiff < 0, "Away Slightly Favored", ifelse(df$WPDiff <= 0.146, "Home Slightly Favored", "Home Favored")))
+df$WPDiffCat = factor(df$WPDiffCat, levels = c("Away Favored", "Away Slightly Favored", "Home Slightly Favored", "Home Favored"))
+knitr::kable(table(df$WPDiffCat))
+df %>% ggplot(aes(x = pointDiff, fill = Winner)) + geom_histogram(alpha = I(.90), bins = 60) + geom_vline(xintercept = 0, linetype = "dashed") + facet_grid(season ~ WPDiffCat, scales = "free_y") + scale_fill_manual("", values = c("#66C2A5","#5E4FA2")) + theme(legend.position = "none") + scale_x_continuous("Point Differential", breaks = seq(-40, 40, 20)) + scale_y_continuous("Games")
+
+```
+
+```{r, echo = F, fig.height=4}
+catmeans = df %>% group_by(season, WPDiffCat) %>% summarise(.groups = "drop", pointDiff = mean(pointDiff)) %>% as.data.frame() %>% arrange(WPDiffCat) %>% left_join(avgpd, by = "season")
+catmeans$WPDiffCat = factor(catmeans$WPDiffCat, levels = rev(unique(catmeans$WPDiffCat)))
+catmeans %>% ggplot(aes(x = season, y = pointDiff, color = WPDiffCat)) + geom_hline(yintercept = 0, color = "grey50") + geom_line(size = 1) + geom_point() + scale_color_manual("", values = c("#67001F","#B2182B","#D6604D","#F4A582")) + theme_bw() + scale_x_continuous("") + scale_y_continuous("Average Home Point Differential") + geom_point(aes(x = season, y = mpointDiff), color = "grey20", shape = 18) + geom_line(aes(x = season, y = mpointDiff), linetype = "dashed", color = "black")
+
+
+```
+
+```{r, echo = F}
+cattab = df %>% group_by(season, WPDiffCat, Winner) %>% summarize(.groups = "drop", Games = n())
+ndf = cattab %>% group_by(season, WPDiffCat) %>% summarise(.groups = "drop", n = sum(Games))
+cattab$n = 0
+for (i in 1:nrow(cattab)){
+  if (i %% 2 == 0){
+    cattab$n[i] = cattab$Games[i-1] + cattab$Games[i]
+  } else{
+    cattab$n[i] = cattab$Games[i+1] + cattab$Games[i]
+  }
+}
+
+meanPD = df %>% group_by(season) %>% summarise(.groups = "drop", pointDiff = mean(pointDiff))
+
+cattab %>% ggplot(aes(x = season, y = Games, fill = Winner)) + geom_bar(color = "grey5", stat = "identity", position = "fill", alpha = I(0.875)) + facet_grid(. ~ WPDiffCat, scales = "free_y") + scale_x_continuous("", breaks = 2016:2021) + scale_y_continuous("Proportion of Games Won") + scale_fill_manual("", values = c("#66C2A5","#5E4FA2")) + theme_bw() + geom_hline(yintercept = 0.50, linetype = "dotted", color = "grey15") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_text(aes(y = .05, label = n), angle = 90, hjust = 0, check_overlap = T) + theme(legend.position = "top")
+
+```
+
+
+
+```{r, echo = F}
+CG = df %>% filter(WPDiffCat == "Away Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+p0 = 100*(CG$count[which(CG$sznGp == "past" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "past")])) %>% round(4)
+p1 = 100*(CG$count[which(CG$sznGp == "current" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "current")])) %>% round(4)
+
+```
+
+To test whether that difference in proportion of games won by home teams in 2016-2020 versus 2021 is significant, we can estimate the values using a confidence interval for the difference in proportions. We can estimate that same difference in each category at the 1% significance level to see in which categories home court advantage is being most heavily affected.
+
+```{r, echo = F}
+pi1 = CG$count[which(CG$sznGp == "past" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "past")])
+pi2 = CG$count[which(CG$sznGp == "curr" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "curr")])
+diff = pi1 - pi2
+z = qnorm(p = .995)
+SE = ((pi1)*(1-pi1))/(sum(CG$count[which(CG$sznGp == "past")])) + ((pi2)*(1-pi2))/(sum(CG$count[which(CG$sznGp == "curr")])) %>% sqrt()
+c = diff + c(-z*SE, z*SE)
+AFCI = data.frame(Game = "Away Favored", LowerBound = c[1], Mean = mean(c), UpperBound = c[2])
+
+CG = df %>% filter(WPDiffCat == "Away Slightly Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+pi1 = CG$count[which(CG$sznGp == "past" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "past")])
+pi2 = CG$count[which(CG$sznGp == "curr" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "curr")])
+diff = pi1 - pi2
+z = qnorm(p = .995)
+SE = ((pi1)*(1-pi1))/(sum(CG$count[which(CG$sznGp == "past")])) + ((pi2)*(1-pi2))/(sum(CG$count[which(CG$sznGp == "curr")])) %>% sqrt()
+c = diff + c(-z*SE, z*SE)
+ASFCI = data.frame(Game = "Away Slightly Favored", LowerBound = c[1], Mean = mean(c), UpperBound = c[2])
+
+CG = df %>% filter(WPDiffCat == "Home Slightly Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+pi1 = CG$count[which(CG$sznGp == "past" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "past")])
+pi2 = CG$count[which(CG$sznGp == "curr" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "curr")])
+diff = pi1 - pi2
+z = qnorm(p = .995)
+SE = ((pi1)*(1-pi1))/(sum(CG$count[which(CG$sznGp == "past")])) + ((pi2)*(1-pi2))/(sum(CG$count[which(CG$sznGp == "curr")])) %>% sqrt()
+c = diff + c(-z*SE, z*SE)
+HSFCI = data.frame(Game = "Home Slightly Favored", LowerBound = c[1], Mean = mean(c), UpperBound = c[2])
+
+CG = df %>% filter(WPDiffCat == "Home Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+pi1 = CG$count[which(CG$sznGp == "past" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "past")])
+pi2 = CG$count[which(CG$sznGp == "curr" & CG$Winner == "Home")]/sum(CG$count[which(CG$sznGp == "curr")])
+diff = pi1 - pi2
+z = qnorm(p = .995)
+SE = ((pi1)*(1-pi1))/(sum(CG$count[which(CG$sznGp == "past")])) + ((pi2)*(1-pi2))/(sum(CG$count[which(CG$sznGp == "curr")])) %>% sqrt()
+c = diff + c(-z*SE, z*SE)
+HFCI = data.frame(Game = "Home Favored", LowerBound = c[1], Mean = mean(c), UpperBound = c[2])
+
+CI = rbind.data.frame(AFCI, ASFCI, HSFCI, HFCI)
+CI$Significant = ifelse(CI$LowerBound < 0 & CI$UpperBound > 0, " ", "99% significant")
+names(CI)[1] = "Matchup Type"
+knitr::kable(CI)
+
+```
+
+  ```{r, results='asis', echo=FALSE}
+cat("\\newpage")
+```
+
+### Bayesian Analysis of True Proportion
+#### Away Team Slightly Favored
+
+```{r}
+away_slight = df %>% filter(WPDiffCat == "Away Slightly Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+
+bayes = data.frame(theta = seq(0.3,0.6,.0001))
+bayes = bayes %>% mutate(Prior = dbeta(x = theta, shape1 = as.numeric(away_slight[4,3]), shape2 = as.numeric(away_slight[3,3])))
+bayes = bayes %>% mutate(Data = dbeta(x = theta, shape1 = as.numeric(away_slight[2,3]), shape2 = as.numeric(away_slight[1,3])))
+bayes = bayes %>% mutate(Posterior = dbeta(x = theta, shape1 = as.numeric(away_slight[2,3]) + as.numeric(away_slight[4,3]), shape2 = as.numeric(away_slight[1,3]) + as.numeric(away_slight[3,3])))
+
+bayes_plot = bayes %>% gather("Information", "Density", -theta)
+bayes_plot$Information = factor(bayes_plot$Information, levels = c("Prior", "Data", "Posterior"))
+
+bayes_plot %>% ggplot(aes(x = theta, y = Density, color = Information, linetype = Information)) + geom_line(size = 1) + theme_bw() + theme(legend.position = "top") + scale_color_manual("", values = c("#66C2A5","#FC8D62","#8DA0CB")) + guides(linetype = F) + scale_x_continuous("Home Team Win Percentage")
+
+```
+
+```{r}
+sim = data.frame(pri_draw = rbeta(n = 2e5, shape1 = as.numeric(away_slight[4,3]), 
+                                  shape2 = as.numeric(away_slight[3,3])),
+           pos_draw = rbeta(n = 2e5, shape1 = as.numeric(away_slight[2,3]) + as.numeric(away_slight[4,3]), 
+                            shape2 = as.numeric(away_slight[1,3]) + as.numeric(away_slight[3,3])))
+sim_gather = sim %>% gather("Draw", "Value") %>% mutate(Draw = ifelse(Draw == "pri_draw", "2016-2020", "Updated 2021"))
+
+sim_gather %>% ggplot(aes(x = Value, fill = Draw)) + geom_vline(xintercept = .5, alpha = I(1/2)) + geom_histogram(alpha = I(2/3), position = "identity", binwidth = .0025) + annotate("text", x = rep(.47,2), y = c(15000,14000), label = c("Pr(W% decrease) =", mean(sim$pri_draw > sim$pos_draw))) + theme_bw() + scale_fill_manual("Simulations", values = rev(c("#5B5EA6", "#242542"))) + scale_y_continuous("Count per 200,000 simulations") + scale_x_continuous("Home Team Win Percentage", breaks = seq(.44,.58,.02)) + theme(legend.position = "top")
+
+
+```
+#### Home Team Slightly Favored
+
+```{r}
+home_slight = df %>% filter(WPDiffCat == "Home Slightly Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+
+bayes = data.frame(theta = seq(0.5,.75,.0001))
+bayes = bayes %>% mutate(Prior = dbeta(x = theta, shape1 = as.numeric(home_slight[4,3]), shape2 = as.numeric(home_slight[3,3])))
+bayes = bayes %>% mutate(Data = dbeta(x = theta, shape1 = as.numeric(home_slight[2,3]), shape2 = as.numeric(home_slight[1,3])))
+bayes = bayes %>% mutate(Posterior = dbeta(x = theta, shape1 = as.numeric(home_slight[2,3]) + as.numeric(home_slight[4,3]), shape2 = as.numeric(home_slight[1,3]) + as.numeric(home_slight[3,3])))
+
+bayes_plot = bayes %>% gather("Information", "Density", -theta)
+bayes_plot$Information = factor(bayes_plot$Information, levels = c("Prior", "Data", "Posterior"))
+
+bayes_plot %>% ggplot(aes(x = theta, y = Density, color = Information, linetype = Information)) + geom_line(size = 1) + theme_bw() + theme(legend.position = "top") + scale_color_manual("", values = c("#66C2A5","#FC8D62","#8DA0CB")) + guides(linetype = F)
+
+```
+```{r}
+sim = data.frame(pri_draw = rbeta(n = 2e5, shape1 = as.numeric(home_slight[4,3]), 
+                                  shape2 = as.numeric(home_slight[3,3])),
+           pos_draw = rbeta(n = 2e5, shape1 = as.numeric(home_slight[2,3]) + as.numeric(home_slight[4,3]), 
+                            shape2 = as.numeric(home_slight[1,3]) + as.numeric(home_slight[3,3])))
+sim_gather = sim %>% gather("Draw", "Value") %>% mutate(Draw = ifelse(Draw == "pri_draw", "2016-2020", "Updated 2021"))
+
+sim_gather %>% ggplot(aes(x = Value, fill = Draw)) + geom_histogram(alpha = I(2/3), position = "identity", binwidth = .0025) + annotate("text", x = rep(.63,2), y = c(17000,16000), label = c("Pr(W% decrease) =", mean(sim$pri_draw > sim$pos_draw))) + theme_bw() + scale_fill_manual("Simulations", values = rev(c("#5B5EA6", "#242542"))) + scale_y_continuous("Count per 200,000 simulations") + scale_x_continuous("Proportion of Home Team Wins", breaks = seq(.62,.72,.02)) + theme(legend.position = "top")
+
+
+```
+#### Away Team Heavily Favored
+
+```{r}
+away_heavily = df %>% filter(WPDiffCat == "Away Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+
+bayes = data.frame(theta = seq(0.25,0.44,.0001))
+bayes = bayes %>% mutate(Prior = dbeta(x = theta, shape1 = as.numeric(away_heavily[4,3]), shape2 = as.numeric(away_heavily[3,3])))
+bayes = bayes %>% mutate(Data = dbeta(x = theta, shape1 = as.numeric(away_heavily[2,3]), shape2 = as.numeric(away_heavily[1,3])))
+bayes = bayes %>% mutate(Posterior = dbeta(x = theta, shape1 = as.numeric(away_heavily[2,3]) + as.numeric(away_heavily[4,3]), shape2 = as.numeric(away_heavily[1,3]) + as.numeric(away_heavily[3,3])))
+
+bayes_plot = bayes %>% gather("Information", "Density", -theta)
+bayes_plot$Information = factor(bayes_plot$Information, levels = c("Prior", "Data", "Posterior"))
+
+bayes_plot %>% ggplot(aes(x = theta, y = Density, color = Information, linetype = Information)) + geom_line(size = 1) + theme_bw() + theme(legend.position = "top") + scale_color_manual("", values = c("#66C2A5","#FC8D62","#8DA0CB")) + guides(linetype = F)
+
+```
+
+```{r}
+sim = data.frame(pri_draw = rbeta(n = 2e5, shape1 = as.numeric(away_heavily[4,3]), 
+                                  shape2 = as.numeric(away_heavily[3,3])),
+           pos_draw = rbeta(n = 2e5, shape1 = as.numeric(away_heavily[2,3]) + as.numeric(away_heavily[4,3]), 
+                            shape2 = as.numeric(away_heavily[1,3]) + as.numeric(away_heavily[3,3])))
+sim_gather = sim %>% gather("Draw", "Value") %>% mutate(Draw = ifelse(Draw == "pri_draw", "Prior", "Posterior"))
+
+sim_gather %>% ggplot(aes(x = Value, fill = Draw)) + geom_histogram(alpha = I(2/3), position = "identity", binwidth = .0025) + annotate("text", x = rep(.265,2), y = c(17000,16000), label = c("Pr(Posterior < Prior) =", mean(sim$pri_draw > sim$pos_draw))) + theme_bw() + scale_fill_manual("", values = rev(c("#5B5EA6", "#242542"))) + scale_y_continuous("Count per 200,000 simulations") + scale_x_continuous("Proportion of Home Team Wins", breaks = seq(.26,.36,.02)) + ggtitle("Away Team Heavily Favored", "Difference between prior simulations (2016-2020) and posterior simulations (2021)")
+
+
+```
+
+#### Home Team Heavily Favored
+
+```{r}
+home_heavily = df %>% filter(WPDiffCat == "Home Favored") %>% mutate(sznGp = ifelse(season > 2020, "curr", "past")) %>% group_by(sznGp, Winner) %>% summarize(.groups = "drop", count = n())
+
+bayes = data.frame(theta = seq(0.7,0.90,.0001))
+bayes = bayes %>% mutate(Prior = dbeta(x = theta, shape1 = as.numeric(home_heavily[4,3]), shape2 = as.numeric(home_heavily[3,3])))
+bayes = bayes %>% mutate(Data = dbeta(x = theta, shape1 = as.numeric(home_heavily[2,3]), shape2 = as.numeric(home_heavily[1,3])))
+bayes = bayes %>% mutate(Posterior = dbeta(x = theta, shape1 = as.numeric(home_heavily[2,3]) + as.numeric(home_heavily[4,3]), shape2 = as.numeric(home_heavily[1,3]) + as.numeric(home_heavily[3,3])))
+
+bayes_plot = bayes %>% gather("Information", "Density", -theta)
+bayes_plot$Information = factor(bayes_plot$Information, levels = c("Prior", "Data", "Posterior"))
+
+bayes_plot %>% ggplot(aes(x = theta, y = Density, color = Information, linetype = Information)) + geom_line(size = 1) + theme_bw() + theme(legend.position = "top") + scale_color_manual("", values = c("#66C2A5","#FC8D62","#8DA0CB")) + guides(linetype = F)
+
+```
+
+```{r}
+sim = data.frame(pri_draw = rbeta(n = 2e5, shape1 = as.numeric(home_heavily[4,3]), 
+                                  shape2 = as.numeric(home_heavily[3,3])),
+           pos_draw = rbeta(n = 2e5, shape1 = as.numeric(home_heavily[2,3]) + as.numeric(home_heavily[4,3]), 
+                            shape2 = as.numeric(home_heavily[1,3]) + as.numeric(home_heavily[3,3])))
+sim_gather = sim %>% gather("Draw", "Value") %>% mutate(Draw = ifelse(Draw == "pri_draw", "Prior", "Posterior"))
+
+sim_gather %>% ggplot(aes(x = Value, fill = Draw)) + geom_histogram(alpha = I(2/3), position = "identity", binwidth = .0025) + annotate("text", x = rep(.80,2), y = c(20000,18700), label = c("Pr(Posterior < Prior) =", mean(sim$pri_draw > sim$pos_draw))) + theme_bw() + scale_fill_manual("", values = rev(c("#5B5EA6", "#242542"))) + scale_y_continuous("Count per 200,000 simulations") + scale_x_continuous("Proportion of Home Team Wins", breaks = seq(.775, .875, .01)) + ggtitle("Home Team Heavily Favored", "Difference between prior simulations (2016-2020) and posterior simulations (2021)")
+
+
+```
+
+
+
+
+
+
+
+
+
